@@ -1,0 +1,4 @@
+# Runtime uses only Python standard library.
+# The container image installs external CLI tools:
+# - openssh-client
+# - qrencode

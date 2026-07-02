@@ -1,0 +1,9 @@
+data/
+__pycache__/
+*.py[cod]
+.venv/
+.env
+deploy/routeros-install.rsc
+dist/
+.idea/
+.idea
