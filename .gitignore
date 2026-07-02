@@ -4,6 +4,5 @@ __pycache__/
 .venv/
 .env
 deploy/routeros-install.rsc
-dist/
 .idea/
 .idea
