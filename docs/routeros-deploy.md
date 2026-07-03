@@ -92,17 +92,74 @@ python3 scripts/generate_install.py \
 означает, что RouterOS не нашел файл, указанный в параметре `/container/add
 file=...`.
 
-3. Сгенерировать SSH key pair для контейнера. Private key положить в:
+3. Подготовить SSH key для доступа приложения к MikroTik.
+
+Ключ генерируется на вашей локальной машине, не на MikroTik. Например, из корня
+этого репозитория:
+
+```bash
+ssh-keygen -t ed25519 -f ./wg-easy-id_ed25519 -C "mikrotik-wg-easy"
+```
+
+После этого появятся два файла:
+
+```text
+wg-easy-id_ed25519      # private key, секретный файл
+wg-easy-id_ed25519.pub  # public key, можно загружать на MikroTik
+```
+
+Private key нужен контейнеру. Его нужно загрузить на диск MikroTik в папку,
+которая будет примонтирована в контейнер как `/data`.
+
+Целевое расположение private key на MikroTik:
 
 ```text
 disk1/wg-easy-data/id_ed25519
 ```
 
-Public key загрузить на MikroTik как файл, например:
+То есть локальный файл `wg-easy-id_ed25519` нужно загрузить на MikroTik и
+переименовать в `id_ed25519` внутри папки `disk1/wg-easy-data`.
+
+Если папки `disk1/wg-easy-data` еще нет, создайте ее в WinBox/WebFig через
+`Files`, либо через CLI, если ваша версия RouterOS поддерживает создание
+директорий:
+
+```routeros
+/file/add name=disk1/wg-easy-data type=directory
+```
+
+Проверка private key на MikroTik:
+
+```routeros
+/file/print where name~"wg-easy-data"
+```
+
+Public key нужен самому RouterOS. Его тоже нужно загрузить на MikroTik как
+обычный файл, например в корень `Files`:
 
 ```text
-wg-easy.pub
+wg-easy-id_ed25519.pub
 ```
+
+Импортировать public key сразу на этом шаге нельзя, потому что пользователь
+`wg-easy` создается install script на шаге 5. Поэтому пока только загрузите
+`.pub` файл, а импорт будет на шаге 6.
+
+Если хотите проверить ключ заранее, можно временно импортировать public key для
+вашего текущего admin-пользователя:
+
+```routeros
+/user/ssh-keys/import user=admin public-key-file=wg-easy-id_ed25519.pub
+```
+
+И проверить с локальной машины:
+
+```bash
+ssh -i ./wg-easy-id_ed25519 admin@192.168.88.1 /system/identity/print
+```
+
+После проверки временный ключ у `admin` лучше удалить и затем импортировать его
+уже для пользователя `wg-easy` на шаге 6.
 
 4. Сгенерировать install script:
 
@@ -135,10 +192,19 @@ UI.
 /import file-name=routeros-install.rsc
 ```
 
-6. Импортировать SSH public key для пользователя `wg-easy`:
+6. Импортировать SSH public key для пользователя `wg-easy`.
+
+Этот шаг выполняется после `/import file-name=routeros-install.rsc`, потому что
+именно install script создает пользователя `wg-easy`.
 
 ```routeros
-/user/ssh-keys/import user=wg-easy public-key-file=wg-easy.pub
+/user/ssh-keys/import user=wg-easy public-key-file=wg-easy-id_ed25519.pub
+```
+
+Проверка:
+
+```routeros
+/user/ssh-keys/print where user=wg-easy
 ```
 
 7. Открыть:
