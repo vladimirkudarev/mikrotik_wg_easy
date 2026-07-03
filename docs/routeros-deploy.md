@@ -123,8 +123,9 @@ file=...`.
 /file/remove [find where name="disk1/mikrotik-wg-easy.tar"]
 ```
 
-Новый Alpine/RouterOS archive должен быть около `20MiB`. Старый Debian/OCI
-archive около `45MiB` слишком тяжелый и несовместим с RouterOS parser:
+Новый Go/scratch RouterOS archive для `arm64` занимает около `7.5MiB` в виде
+`.tar` и около `3MiB` в виде `.tar.gz`. Старые Debian/OCI archives были
+слишком тяжелыми и несовместимыми с RouterOS parser:
 
 ```text
 download/extract error: no config found in manifest
@@ -204,9 +205,9 @@ Public key нужен самому RouterOS. Его тоже нужно загр
 wg-easy-id_ed25519.pub
 ```
 
-Импортировать public key сразу на этом шаге нельзя, потому что пользователь
-`wg-easy` создается install script на шаге 5. Поэтому пока только загрузите
-`.pub` файл, а импорт будет на шаге 6.
+Install script автоматически импортирует этот public key для пользователя
+`wg-easy`, если файл `wg-easy-id_ed25519.pub` уже загружен в корень Files.
+Пользователь `wg-easy` создается этим же install script.
 
 Если хотите проверить ключ заранее, можно временно импортировать public key для
 вашего текущего admin-пользователя:
@@ -255,10 +256,12 @@ UI.
 /import file-name=routeros-install.rsc
 ```
 
-6. Импортировать SSH public key для пользователя `wg-easy`.
+6. Проверить, что SSH public key импортирован для пользователя `wg-easy`.
 
-Этот шаг выполняется после `/import file-name=routeros-install.rsc`, потому что
-именно install script создает пользователя `wg-easy`.
+Если файл `wg-easy-id_ed25519.pub` был загружен до импорта install script, ключ
+импортируется автоматически. Если файл забыли загрузить, загрузите его и
+повторно выполните `/import file-name=routeros-install.rsc` или импортируйте
+вручную:
 
 ```routeros
 /user/ssh-keys/import user=wg-easy public-key-file=wg-easy-id_ed25519.pub
@@ -287,10 +290,13 @@ http://192.168.88.1:8080
 - outbound masquerade для контейнерной сети;
 - dst-nat Web UI только из указанной LAN/admin subnet;
 - RouterOS group/user `wg-easy`;
-- ограничение SSH service address;
 - container env;
 - `/data` mount;
 - import/start container из tar image.
+
+Install script больше не меняет `/ip/service ssh address`, чтобы не отрезать
+админу удаленный доступ во время установки. Закрывайте SSH вручную только после
+успешного запуска и проверки Web UI.
 
 ## Ручная схема
 
@@ -323,7 +329,6 @@ Web UI публиковать только в доверенную LAN/admin VPN
 ```routeros
 /user/group/add name=wg-easy policy=ssh,read,write,sensitive,policy,test
 /user/add name=wg-easy group=wg-easy disabled=no
-/ip/service/set ssh address=172.17.0.0/24,192.168.88.0/24
 ```
 
 Публичный ключ контейнера нужно импортировать в RouterOS для пользователя
@@ -361,6 +366,18 @@ production предпочтительнее передавать `APP_PASSWORD_H
 /container/envs/add list=ENV_WG_EASY key=ROS_USER value="wg-easy"
 /container/envs/add list=ENV_WG_EASY key=ROS_SSH_KEY value="/data/id_ed25519"
 /container/envs/add list=ENV_WG_EASY key=APP_TRUST_PROXY_HEADERS value="0"
-/container/mounts/add list=MOUNT_WG_EASY src=disk1/wg-easy-data dst=/data
+/container/mounts/add list=MOUNT_WG_EASY src=wg-easy-data dst=/data
 /container/add remote-image=<registry>/mikrotik-wg-easy:latest interface=veth-wg-easy root-dir=disk1/images/wg-easy mountlists=MOUNT_WG_EASY envlist=ENV_WG_EASY start-on-boot=yes logging=yes
 ```
+
+## Post-install hardening
+
+После того как контейнер запущен, Web UI открывается и SSH из контейнера к
+RouterOS работает, можно ограничить SSH service address вручную:
+
+```routeros
+/ip/service/set ssh address=172.17.0.0/24,192.168.88.0/24
+```
+
+Не выполняйте эту команду, если ваш текущий административный доступ идет через
+другой внешний адрес или VPN, не входящий в этот список.

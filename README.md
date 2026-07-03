@@ -7,16 +7,18 @@
 
 ## Текущий статус
 
-Инициализирован исследовательский каркас проекта:
+Репозиторий содержит рабочую Go-версию приложения для RouterOS container:
 
 - `docs/product-brief.md` - цель, production scope и ограничения.
 - `docs/architecture.md` - предлагаемая архитектура.
-- `src/mikrotik_wg_easy/app.py` - приложение.
-- `Dockerfile` - образ для RouterOS container.
+- `cmd/mikrotik-wg-easy/main.go` - web UI и RouterOS SSH-интеграция.
+- `Dockerfile` - multi-stage Go build, runtime `scratch`.
 - `docs/routeros-deploy.md` - схема развертывания на MikroTik.
 - `docs/security.md` - production baseline.
 - `scripts/generate_install.py` - генератор RouterOS install script.
 - `scripts/hash_password.py` - генератор `APP_PASSWORD_HASH`.
+- `scripts/routeros_archive.py` - конвертер Docker archive в формат, который
+  принимает RouterOS container.
 
 Попытка инициализации через `ai-factory init` была выполнена, но CLI не смог
 завершить установку в `.codex/skills` из-за прав на служебную директорию в
@@ -36,7 +38,11 @@
 ## Локальный запуск для разработки
 
 ```bash
-APP_INSECURE_DEV=1 python3 src/mikrotik_wg_easy/app.py
+docker build -t mikrotik-wg-easy:dev .
+docker run --rm -p 8080:8080 \
+  -e APP_INSECURE_DEV=1 \
+  -e APP_DATA=/tmp/mikrotik-wg-easy \
+  mikrotik-wg-easy:dev
 ```
 
 По умолчанию UI доступен на `http://127.0.0.1:8080`, пароль в dev-режиме:

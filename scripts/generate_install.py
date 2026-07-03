@@ -19,6 +19,7 @@ def main():
     parser.add_argument("--lan-address", default="192.168.88.1", help="MikroTik LAN address used to open Web UI.")
     parser.add_argument("--lan-subnet", default="192.168.88.0/24", help="Subnet allowed to access Web UI.")
     parser.add_argument("--disk", default="disk1", help="RouterOS disk name for data/root dirs.")
+    parser.add_argument("--data-dir", default="wg-easy-data", help="RouterOS Files directory mounted as /data.")
     source = parser.add_mutually_exclusive_group()
     source.add_argument("--image-file", default="mikrotik-wg-easy.tar", help="Container image filename on --disk.")
     source.add_argument("--image", default="", help="Exact RouterOS /file name for the container image. Advanced override.")
@@ -46,6 +47,7 @@ def main():
         "__LAN_ADDRESS__": args.lan_address,
         "__LAN_SUBNET__": args.lan_subnet,
         "__DISK__": args.disk,
+        "__DATA_DIR__": args.data_dir,
         "__UI_PORT__": str(args.ui_port),
         "__APP_PASSWORD__": password,
         "__CONTAINER_ADD_SOURCE__": container_source,

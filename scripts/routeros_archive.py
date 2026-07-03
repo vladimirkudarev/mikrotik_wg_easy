@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import gzip
 import io
 import json
 import tarfile
@@ -20,6 +21,12 @@ def add_dir(tar, name):
     tar.addfile(info)
 
 
+def docker_layer_payload(payload):
+    if payload.startswith(b"\x1f\x8b"):
+        return gzip.decompress(payload)
+    return payload
+
+
 def convert(input_archive, output_archive, repo_tag):
     with tarfile.open(input_archive, "r:*") as src:
         manifest = json.load(src.extractfile("manifest.json"))
@@ -37,7 +44,8 @@ def convert(input_archive, output_archive, repo_tag):
             layer_id = f"{index:03d}-{digest}"
             layer_name = f"{layer_id}/layer.tar"
             layers.append(layer_name)
-            layer_payloads.append((layer_id, src.extractfile(layer_path).read()))
+            payload = src.extractfile(layer_path).read()
+            layer_payloads.append((layer_id, docker_layer_payload(payload)))
 
     legacy_manifest = [
         {
@@ -56,9 +64,6 @@ def convert(input_archive, output_archive, repo_tag):
             add_dir(dst, layer_id)
             add_bytes(dst, f"{layer_id}/VERSION", b"1.0")
             add_bytes(dst, f"{layer_id}/json", json.dumps({"id": layer_id}).encode())
-            # RouterOS rejects OCI blob paths. It accepts Docker save style layer paths.
-            # Keep the original compressed layer payload to avoid archives too large for
-            # small MikroTik storage.
             add_bytes(dst, f"{layer_id}/layer.tar", payload)
 
 

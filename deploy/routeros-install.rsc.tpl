@@ -6,13 +6,15 @@
 :local disk "__DISK__"
 :local uiPort "__UI_PORT__"
 :local appPassword "__APP_PASSWORD__"
+:local sshPublicKeyFile "wg-easy-id_ed25519.pub"
 
 :local containerBridge "containers"
 :local containerSubnet "172.17.0.0/24"
 :local routerContainerIp "172.17.0.1"
 :local appContainerIp "172.17.0.2"
 :local appVeth "veth-wg-easy"
-:local dataDir ($disk . "/wg-easy-data")
+:local containerName "mikrotik-wg-easy"
+:local dataDir "__DATA_DIR__"
 :local rootDir ($disk . "/images/wg-easy")
 
 __IMAGE_PREFLIGHT__
@@ -55,8 +57,12 @@ __IMAGE_PREFLIGHT__
   add name=wg-easy group=wg-easy disabled=no
 }
 
-/ip/service
-set ssh address=($containerSubnet . "," . $lanSubnet)
+/user/ssh-keys
+:if ([:len [/file/find where name=$sshPublicKeyFile]] > 0) do={
+  :if ([:len [find where user="wg-easy"]] = 0) do={
+    import user=wg-easy public-key-file=$sshPublicKeyFile
+  }
+}
 
 /container/envs
 :foreach i in=[find where list="ENV_WG_EASY"] do={ remove $i }
@@ -72,13 +78,15 @@ add list=ENV_WG_EASY key=WG_ROUTER_ADDRESS value="10.8.0.1/24"
 /container/mounts
 :if ([:len [find where list="MOUNT_WG_EASY" and dst="/data"]] = 0) do={
   add list=MOUNT_WG_EASY src=$dataDir dst=/data
+} else={
+  set [find where list="MOUNT_WG_EASY" and dst="/data"] src=$dataDir
 }
 
 /container
-:if ([:len [find where root-dir=$rootDir]] = 0) do={
-  add __CONTAINER_ADD_SOURCE__ interface=$appVeth root-dir=$rootDir mountlists=MOUNT_WG_EASY envlist=ENV_WG_EASY start-on-boot=yes logging=yes
+:if ([:len [find where name=$containerName]] = 0) do={
+  add __CONTAINER_ADD_SOURCE__ name=$containerName interface=$appVeth root-dir=$rootDir mountlists=MOUNT_WG_EASY envlist=ENV_WG_EASY start-on-boot=yes logging=yes
 }
-start [find where root-dir=$rootDir]
+start [find where name=$containerName]
 
 :put ("MikroTik WireGuard Easy install script finished. Open http://" . $lanAddress . ":" . $uiPort)
-:put ("Upload / import SSH public key for user wg-easy if it is not imported yet.")
+:put ("Check /user/ssh-keys/print where user=wg-easy. If key is missing, upload wg-easy-id_ed25519.pub and re-import this script.")
