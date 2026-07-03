@@ -48,6 +48,7 @@ type Client struct {
 	Config    string `json:"config"`
 	Disabled  bool   `json:"disabled"`
 	CreatedAt string `json:"created_at"`
+	ConfigOK  bool   `json:"config_ok"`
 }
 
 type State struct {
@@ -230,10 +231,85 @@ func runRouterOS(command string) (string, error) {
 	}
 	defer sess.Close()
 	out, err := sess.CombinedOutput(command)
+	text := strings.TrimSpace(string(out))
 	if err != nil {
-		return "", fmt.Errorf("%s", strings.TrimSpace(string(out)))
+		if text == "" {
+			text = err.Error()
+		}
+		return "", fmt.Errorf("%s", text)
 	}
-	return strings.TrimSpace(string(out)), nil
+	if err := routerOutputError(text); err != nil {
+		return "", err
+	}
+	return text, nil
+}
+
+func routerOutputError(out string) error {
+	lower := strings.ToLower(strings.TrimSpace(out))
+	if lower == "" {
+		return nil
+	}
+	markers := []string{
+		"failure:",
+		"no such item",
+		"input does not match",
+		"expected end of command",
+		"bad command name",
+		"syntax error",
+	}
+	for _, marker := range markers {
+		if strings.Contains(lower, marker) {
+			return fmt.Errorf("RouterOS error: %s", out)
+		}
+	}
+	return nil
+}
+
+func validClientConfig(config string) bool {
+	return strings.Contains(config, "[Interface]") &&
+		strings.Contains(config, "PrivateKey") &&
+		strings.Contains(config, "[Peer]") &&
+		strings.Contains(config, "PublicKey") &&
+		routerOutputError(config) == nil
+}
+
+func clientsWithStatus(clients []Client) []Client {
+	out := make([]Client, len(clients))
+	for i, c := range clients {
+		c.ConfigOK = validClientConfig(c.Config)
+		out[i] = c
+	}
+	return out
+}
+
+func ensureWireGuardInterface(name string) error {
+	out, err := runRouterOS(fmt.Sprintf(`:put [:len [/interface/wireguard/find where name=%s]]`, rosQuote(name)))
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(out) != "1" {
+		return fmt.Errorf("WireGuard interface %q не найден на MikroTik. Сначала нажмите \"Применить настройку\" или укажите существующий interface в настройках", name)
+	}
+	return nil
+}
+
+func peerExists(comment string) (bool, error) {
+	out, err := runRouterOS(fmt.Sprintf(`:put [:len [/interface/wireguard/peers/find where comment=%s]]`, rosQuote(comment)))
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(out) != "0", nil
+}
+
+func peerClientConfig(comment string) (string, error) {
+	cfg, err := runRouterOS(fmt.Sprintf(`/interface/wireguard/peers/show-client-config [find where comment=%s]`, rosQuote(comment)))
+	if err != nil {
+		return "", err
+	}
+	if !validClientConfig(cfg) {
+		return "", fmt.Errorf("RouterOS вернул невалидный client config: %s", cfg)
+	}
+	return cfg, nil
 }
 
 func nextClientAddress(st State) (string, error) {
@@ -247,17 +323,31 @@ func nextClientAddress(st State) (string, error) {
 	for _, c := range st.Clients {
 		used[c.Address] = true
 	}
-	if out, err := runRouterOS(fmt.Sprintf("/interface/wireguard/peers/print as-value where interface=%s", rosQuote(st.Settings.WGInterface))); err == nil {
-		for _, field := range strings.Fields(out) {
-			if strings.HasPrefix(field, "allowed-address=") || strings.HasPrefix(field, "client-address=") {
-				for _, addr := range strings.Split(strings.SplitN(field, "=", 2)[1], ",") {
-					used[strings.Trim(addr, `"`)] = true
+	if out, err := runRouterOS("/interface/wireguard/peers/print terse"); err == nil {
+		for _, line := range strings.Split(out, "\n") {
+			fields := map[string]string{}
+			for _, field := range strings.Fields(line) {
+				k, v, ok := strings.Cut(field, "=")
+				if ok {
+					fields[k] = strings.Trim(v, `"`)
+				}
+			}
+			if fields["interface"] != st.Settings.WGInterface {
+				continue
+			}
+			for _, key := range []string{"allowed-address", "client-address"} {
+				for _, addr := range strings.Split(fields[key], ",") {
+					addr = strings.TrimSpace(strings.Trim(addr, `"`))
+					if addr != "" {
+						used[addr] = true
+					}
 				}
 			}
 		}
 	}
+	broadcast := broadcastIP(netw)
 	for candidate := append(net.IP(nil), netw.IP...); netw.Contains(candidate); incIP(candidate) {
-		if candidate.Equal(netw.IP) || candidate.Equal(routerIP) {
+		if candidate.Equal(netw.IP) || candidate.Equal(routerIP) || (broadcast != nil && candidate.Equal(broadcast)) {
 			continue
 		}
 		addr := candidate.String() + "/32"
@@ -275,6 +365,18 @@ func incIP(ip net.IP) {
 			break
 		}
 	}
+}
+
+func broadcastIP(n *net.IPNet) net.IP {
+	ip := n.IP.To4()
+	if ip == nil || len(n.Mask) != net.IPv4len {
+		return nil
+	}
+	out := append(net.IP(nil), ip...)
+	for i := range out {
+		out[i] |= ^n.Mask[i]
+	}
+	return out
 }
 
 func bootstrapRouter() ([]map[string]string, error) {
@@ -304,6 +406,9 @@ func createClient(name string) (Client, error) {
 		return Client{}, fmt.Errorf("client name is required")
 	}
 	st, _ := loadState()
+	if err := ensureWireGuardInterface(st.Settings.WGInterface); err != nil {
+		return Client{}, err
+	}
 	addr, err := nextClientAddress(st)
 	if err != nil {
 		return Client{}, err
@@ -319,11 +424,19 @@ func createClient(name string) (Client, error) {
 	if _, err := runRouterOS(cmd); err != nil {
 		return Client{}, err
 	}
-	cfg, err := runRouterOS(fmt.Sprintf(`:put [/interface/wireguard/peers/show-client-config [find where comment=%s]]`, rosQuote(comment)))
+	exists, err := peerExists(comment)
 	if err != nil {
 		return Client{}, err
 	}
-	c := Client{ID: id, Name: name, Address: addr, Comment: comment, Config: cfg, CreatedAt: time.Now().Format(time.RFC3339)}
+	if !exists {
+		return Client{}, fmt.Errorf("RouterOS не создал peer для клиента %q. Проверьте WireGuard interface и права пользователя wg-easy", name)
+	}
+	cfg, err := peerClientConfig(comment)
+	if err != nil {
+		_, _ = runRouterOS(fmt.Sprintf(`/interface/wireguard/peers/remove [find where comment=%s]`, rosQuote(comment)))
+		return Client{}, err
+	}
+	c := Client{ID: id, Name: name, Address: addr, Comment: comment, Config: cfg, ConfigOK: true, CreatedAt: time.Now().Format(time.RFC3339)}
 	st.Clients = append(st.Clients, c)
 	return c, saveState(st)
 }
@@ -337,6 +450,13 @@ func clientAction(id, action string) (any, error) {
 		find := fmt.Sprintf(`[find where comment=%s]`, rosQuote(c.Comment))
 		switch action {
 		case "disable", "enable":
+			exists, err := peerExists(c.Comment)
+			if err != nil {
+				return nil, err
+			}
+			if !exists {
+				return nil, fmt.Errorf("peer клиента %q не найден на MikroTik. Можно удалить эту запись из сервиса и создать клиента заново", c.Name)
+			}
 			disabled := action == "disable"
 			val := "no"
 			if disabled {
@@ -348,18 +468,35 @@ func clientAction(id, action string) (any, error) {
 			st.Clients[i].Disabled = disabled
 			return st.Clients[i], saveState(st)
 		case "delete":
-			if _, err := runRouterOS(fmt.Sprintf(`/interface/wireguard/peers/remove %s`, find)); err != nil {
+			exists, err := peerExists(c.Comment)
+			if err != nil {
 				return nil, err
+			}
+			if exists {
+				if _, err := runRouterOS(fmt.Sprintf(`/interface/wireguard/peers/remove %s`, find)); err != nil {
+					return nil, err
+				}
 			}
 			st.Clients = append(st.Clients[:i], st.Clients[i+1:]...)
 			return map[string]bool{"ok": true}, saveState(st)
-		case "recreate":
-			cfg, err := runRouterOS(fmt.Sprintf(`:put [/interface/wireguard/peers/show-client-config %s]`, find))
+		case "recreate", "verify":
+			exists, err := peerExists(c.Comment)
+			if err != nil {
+				return nil, err
+			}
+			if !exists {
+				return nil, fmt.Errorf("peer клиента %q не найден на MikroTik. Конфигурация не работает; удалите запись и создайте клиента заново", c.Name)
+			}
+			cfg, err := peerClientConfig(c.Comment)
 			if err != nil {
 				return nil, err
 			}
 			st.Clients[i].Config = cfg
-			return map[string]string{"name": c.Name, "config": cfg}, saveState(st)
+			st.Clients[i].ConfigOK = true
+			if err := saveState(st); err != nil {
+				return nil, err
+			}
+			return map[string]any{"name": c.Name, "config": cfg, "ok": true}, nil
 		}
 	}
 	return nil, http.ErrMissingFile
@@ -505,12 +642,12 @@ var page = template.Must(template.New("page").Parse(`<!doctype html>
     async function api(p,o={}){const h={"content-type":"application/json",...(o.headers||{})};if(o.method&&o.method!="GET")h["x-csrf-token"]=csrf;const r=await fetch(p,{...o,headers:h});const t=await r.text();let d;try{d=t?JSON.parse(t):null}catch{d=t}if(!r.ok)throw new Error(d?.error||t||r.statusText);return d}
     function currentSettings(){const p={};fieldMeta.forEach(([k])=>p[k]=document.getElementById("s_"+k).value.trim());return p}
 	    async function load(){csrf=(await api("/api/session")).csrf;const s=await api("/api/settings");settings.innerHTML=fieldMeta.map(([k,label,hint])=>'<div class="field"><label for="s_'+k+'"><span>'+esc(label)+'</span><span class="hint">'+esc(hint)+'</span></label><input id="s_'+k+'" value="'+esc(s[k])+'"></div>').join("");summary.innerHTML=[["Interface",s.wg_interface],["Client CIDR",s.client_cidr],["Endpoint",s.endpoint||s.router_host],["Allowed IPs",s.allowed_ips]].map(([k,v])=>'<div class="summary-row"><span>'+esc(k)+'</span><span>'+esc(v)+'</span></div>').join("");renderClients(await api("/api/clients"))}
-	    function renderClients(rows){rows=rows||[];if(!rows.length){clientTable.innerHTML='<div class="empty">Клиентов пока нет. Создайте первого клиента и откройте QR-код для подключения.</div>';return}clientTable.innerHTML='<table><thead><tr><th>Имя</th><th>Адрес</th><th>Статус</th><th></th></tr></thead><tbody>'+rows.map(c=>'<tr><td><strong>'+esc(c.name)+'</strong></td><td>'+esc(c.address)+'</td><td><span class="badge '+(c.disabled?"off":"ok")+'">'+(c.disabled?"Отключен":"Активен")+'</span></td><td><div class="actions"><button class="secondary" type="button" data-action="show" data-id="'+esc(c.id)+'">QR / Config</button><a href="/api/clients/'+encodeURIComponent(c.id)+'/download">.conf</a><button class="secondary" type="button" data-action="'+(c.disabled?"enable":"disable")+'" data-id="'+esc(c.id)+'">'+(c.disabled?"Включить":"Отключить")+'</button><button class="secondary" type="button" data-action="recreate-config" data-id="'+esc(c.id)+'">Пересоздать</button><button class="danger" type="button" data-action="delete" data-id="'+esc(c.id)+'">Удалить</button></div></td></tr>').join("")+'</tbody></table>'}
+	    function renderClients(rows){rows=rows||[];if(!rows.length){clientTable.innerHTML='<div class="empty">Клиентов пока нет. Создайте первого клиента и откройте QR-код для подключения.</div>';return}clientTable.innerHTML='<table><thead><tr><th>Имя</th><th>Адрес</th><th>Статус</th><th></th></tr></thead><tbody>'+rows.map(c=>{const ok=!!c.config_ok;const badge=!ok?'<span class="badge off">Ошибка</span>':('<span class="badge '+(c.disabled?"off":"ok")+'">'+(c.disabled?"Отключен":"Активен")+'</span>');const download=ok?'<a href="/api/clients/'+encodeURIComponent(c.id)+'/download">.conf</a>':'<span class="hint">нет .conf</span>';return '<tr><td><strong>'+esc(c.name)+'</strong></td><td>'+esc(c.address)+'</td><td>'+badge+'</td><td><div class="actions"><button class="secondary" type="button" data-action="show" data-id="'+esc(c.id)+'">QR / Config</button>'+download+'<button class="secondary" type="button" data-action="verify" data-id="'+esc(c.id)+'">Проверить</button><button class="secondary" type="button" data-action="'+(c.disabled?"enable":"disable")+'" data-id="'+esc(c.id)+'">'+(c.disabled?"Включить":"Отключить")+'</button><button class="secondary" type="button" data-action="recreate-config" data-id="'+esc(c.id)+'">Пересоздать</button><button class="danger" type="button" data-action="delete" data-id="'+esc(c.id)+'">Удалить</button></div></td></tr>'}).join("")+'</tbody></table>'}
     async function saveSettings(){await api("/api/settings",{method:"POST",body:JSON.stringify(currentSettings())});await load();show("Настройки сохранены")}
     async function bootstrap(){await saveSettings();await api("/api/bootstrap",{method:"POST",body:"{}"});show("Настройка RouterOS применена")}
     async function createClient(){const name=clientName.value.trim();if(!name){show("Введите имя клиента","error");return}const c=await api("/api/clients",{method:"POST",body:JSON.stringify({name})});clientName.value="";await load();await showClient(c.id)}
     async function showClient(id){const c=await api("/api/clients/"+id+"/config");title.textContent=c.name;config.textContent=c.config;qr.src="/api/clients/"+id+"/qr?ts="+Date.now();dlg.showModal()}
-    async function act(id,a){const r=await api("/api/clients/"+id+"/"+a,{method:"POST",body:"{}"});await load();show("Клиент обновлен");if(r.config){title.textContent=r.name;config.textContent=r.config;qr.src="/api/clients/"+id+"/qr?ts="+Date.now();dlg.showModal()}}
+    async function act(id,a){const r=await api("/api/clients/"+id+"/"+a,{method:"POST",body:"{}"});await load();show(a==="verify"?"Проверка прошла: peer и config валидны":"Клиент обновлен");if(r.config){title.textContent=r.name;config.textContent=r.config;qr.src="/api/clients/"+id+"/qr?ts="+Date.now();dlg.showModal()}}
     async function delClient(id){if(!confirm("Удалить клиента и peer на MikroTik?"))return;await api("/api/clients/"+id,{method:"DELETE",body:"{}"});await load();show("Клиент удален")}
     async function logout(){await api("/logout",{method:"POST",body:"{}"});location.href="/"}
     clientTable.addEventListener("click",e=>{const b=e.target.closest("button[data-action]");if(!b)return;const id=b.dataset.id;const a=b.dataset.action;if(a==="show")showClient(id).catch(err=>show(err.message,"error"));else if(a==="delete")delClient(id).catch(err=>show(err.message,"error"));else act(id,a).catch(err=>show(err.message,"error"))});
@@ -620,7 +757,7 @@ func main() {
 		}
 		st, _ := loadState()
 		if r.Method == http.MethodGet {
-			jsonResp(w, st.Clients)
+			jsonResp(w, clientsWithStatus(st.Clients))
 			return
 		}
 		var p struct{ Name string }
@@ -667,11 +804,23 @@ func main() {
 		}
 		switch action {
 		case "config":
+			if !validClientConfig(c.Config) {
+				errResp(w, 409, fmt.Errorf("сохраненная конфигурация клиента невалидна. Нажмите \"Проверить\" или удалите клиента и создайте заново"))
+				return
+			}
 			jsonResp(w, map[string]string{"name": c.Name, "config": c.Config})
 		case "download":
+			if !validClientConfig(c.Config) {
+				errResp(w, 409, fmt.Errorf("сохраненная конфигурация клиента невалидна"))
+				return
+			}
 			w.Header().Set("Content-Disposition", `attachment; filename="`+c.Name+`.conf"`)
 			w.Write([]byte(c.Config))
 		case "qr":
+			if !validClientConfig(c.Config) {
+				errResp(w, 409, fmt.Errorf("сохраненная конфигурация клиента невалидна"))
+				return
+			}
 			png, err := qrcode.Encode(c.Config, qrcode.Medium, 256)
 			if err != nil {
 				errResp(w, 500, err)
@@ -695,6 +844,13 @@ func main() {
 			jsonResp(w, res)
 		case "recreate-config":
 			res, err := clientAction(id, "recreate")
+			if err != nil {
+				errResp(w, 400, err)
+				return
+			}
+			jsonResp(w, res)
+		case "verify":
+			res, err := clientAction(id, "verify")
 			if err != nil {
 				errResp(w, 400, err)
 				return
