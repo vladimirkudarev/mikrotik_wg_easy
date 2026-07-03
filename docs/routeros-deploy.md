@@ -20,6 +20,28 @@
 /system/device-mode/print
 ```
 
+В выводе должно быть видно, что container mode разрешен. Если при импорте
+install script вы видите ошибку:
+
+```text
+failure: not allowed by device-mode (/container/add)
+```
+
+значит RouterOS все еще запрещает `/container/add`. Нужно снова включить
+container mode, обязательно выполнить физическое подтверждение, дождаться
+применения и заново проверить `/system/device-mode/print`.
+
+После этого можно повторить:
+
+```routeros
+/import file-name=routeros-install.rsc
+```
+
+Если предыдущий импорт дошел до строки `/container/add`, часть объектов уже
+могла быть создана: `bridge`, `veth`, NAT, env, mounts, user. Это нормально:
+install script проверяет существующие объекты и повторный импорт рассчитан на
+такой сценарий.
+
 2. Выбрать container image по архитектуре MikroTik:
 
 ```routeros
