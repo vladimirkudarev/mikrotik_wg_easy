@@ -15,6 +15,8 @@
 :local dataDir ($disk . "/wg-easy-data")
 :local rootDir ($disk . "/images/wg-easy")
 
+__IMAGE_PREFLIGHT__
+
 /interface/bridge
 :if ([:len [find where name=$containerBridge]] = 0) do={
   add name=$containerBridge comment="container bridge"

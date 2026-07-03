@@ -11,6 +11,15 @@
 /system/device-mode/update container=yes
 ```
 
+На многих моделях эта команда требует физического подтверждения device-mode
+через кнопку/reset или холодную перезагрузку. Если CLI отработал без понятной
+подсказки и container не включился, включите container mode через WinBox/WebFig
+и проверьте итоговое состояние:
+
+```routeros
+/system/device-mode/print
+```
+
 2. Выбрать container image по архитектуре MikroTik:
 
 ```routeros
@@ -36,6 +45,37 @@ disk1/mikrotik-wg-easy.tar
 ```bash
 gunzip -c dist/mikrotik-wg-easy-arm64.tar.gz > mikrotik-wg-easy.tar
 ```
+
+Важно: значение `--image` в генераторе должно в точности совпадать с `name` в
+RouterOS `/file/print`. Например, если install script сгенерирован с
+`--image disk1/mikrotik-wg-easy.tar`, то на MikroTik должен существовать файл
+именно с таким именем.
+
+Проверьте на MikroTik:
+
+```routeros
+/file/print where name~"mikrotik-wg-easy"
+```
+
+Если файл загружен под другим именем, есть два нормальных варианта:
+
+```routeros
+/file/set [find where name="disk1/mikrotik-wg-easy-arm64.tar"] name="disk1/mikrotik-wg-easy.tar"
+```
+
+или сгенерировать install script под фактическое имя:
+
+```bash
+python3 scripts/generate_install.py \
+  --lan-address 192.168.88.1 \
+  --lan-subnet 192.168.88.0/24 \
+  --disk disk1 \
+  --image disk1/mikrotik-wg-easy-arm64.tar
+```
+
+Ошибка вида `input does not match any value of file (/container/add (file))`
+означает, что RouterOS не нашел файл, указанный в параметре `/container/add
+file=...`.
 
 3. Сгенерировать SSH key pair для контейнера. Private key положить в:
 

@@ -28,7 +28,17 @@ def main():
     args = parser.parse_args()
 
     password = args.password or random_password()
-    container_source = f'remote-image="{args.remote_image}"' if args.remote_image else f"file={args.image}"
+    if args.remote_image:
+        container_source = f'remote-image="{args.remote_image}"'
+        image_preflight = "# remote-image mode: no local image file preflight"
+    else:
+        container_source = f"file={args.image}"
+        image_preflight = (
+            f':local image "{args.image}"\n'
+            ':if ([:len [/file/find where name=$image]] = 0) do={\n'
+            '  :error ("Container image file not found: " . $image . ". Check /file/print and regenerate installer with --image exact-path")\n'
+            '}'
+        )
     content = TEMPLATE.read_text()
     replacements = {
         "__LAN_ADDRESS__": args.lan_address,
@@ -37,6 +47,7 @@ def main():
         "__UI_PORT__": str(args.ui_port),
         "__APP_PASSWORD__": password,
         "__CONTAINER_ADD_SOURCE__": container_source,
+        "__IMAGE_PREFLIGHT__": image_preflight,
     }
     for key, value in replacements.items():
         content = content.replace(key, value)
