@@ -68,10 +68,10 @@ python3 scripts/generate_install.py \
   --lan-address 192.168.88.1 \
   --lan-subnet 192.168.88.0/24 \
   --disk disk1 \
-  --image disk1/mikrotik-wg-easy.tar
+  --image-file mikrotik-wg-easy.tar
 ```
 
-Когда образ будет опубликован в registry, вместо `--image` используйте
+Когда образ будет опубликован в registry, вместо `--image-file` используйте
 `--remote-image registry.example.com/mikrotik-wg-easy:latest`.
 
 Дальше загрузить `deploy/routeros-install.rsc` на MikroTik и выполнить:

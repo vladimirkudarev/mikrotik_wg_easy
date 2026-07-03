@@ -34,27 +34,42 @@
 Это не индивидуальный образ под каждый роутер. Один архив подходит всем
 устройствам той же архитектуры.
 
-Распаковать локально и загрузить container image tar на MikroTik, например:
-
-```text
-disk1/mikrotik-wg-easy.tar
-```
-
-Пример:
+Распаковать локально:
 
 ```bash
 gunzip -c dist/mikrotik-wg-easy-arm64.tar.gz > mikrotik-wg-easy.tar
 ```
 
-Важно: значение `--image` в генераторе должно в точности совпадать с `name` в
-RouterOS `/file/print`. Например, если install script сгенерирован с
-`--image disk1/mikrotik-wg-easy.tar`, то на MikroTik должен существовать файл
-именно с таким именем.
+Загрузить `mikrotik-wg-easy.tar` в корень диска MikroTik `disk1`.
 
-Проверьте на MikroTik:
+Проверка на MikroTik:
 
 ```routeros
 /file/print where name~"mikrotik-wg-easy"
+```
+
+Генератор по умолчанию принимает только имя файла, без `disk1/`:
+
+```bash
+python3 scripts/generate_install.py \
+  --lan-address 192.168.88.1 \
+  --lan-subnet 192.168.88.0/24 \
+  --disk disk1 \
+  --image-file mikrotik-wg-easy.tar
+```
+
+Внутри `.rsc` это будет преобразовано в RouterOS file name
+`disk1/mikrotik-wg-easy.tar`.
+
+Если нужно указать точное значение из `/file/print`, используйте advanced
+override `--image`:
+
+```bash
+python3 scripts/generate_install.py \
+  --lan-address 192.168.88.1 \
+  --lan-subnet 192.168.88.0/24 \
+  --disk disk1 \
+  --image disk1/some-exact-name.tar
 ```
 
 Если файл загружен под другим именем, есть два нормальных варианта:
@@ -70,7 +85,7 @@ python3 scripts/generate_install.py \
   --lan-address 192.168.88.1 \
   --lan-subnet 192.168.88.0/24 \
   --disk disk1 \
-  --image disk1/mikrotik-wg-easy-arm64.tar
+  --image-file mikrotik-wg-easy-arm64.tar
 ```
 
 Ошибка вида `input does not match any value of file (/container/add (file))`
@@ -96,7 +111,7 @@ python3 scripts/generate_install.py \
   --lan-address 192.168.88.1 \
   --lan-subnet 192.168.88.0/24 \
   --disk disk1 \
-  --image disk1/mikrotik-wg-easy.tar \
+  --image-file mikrotik-wg-easy.tar \
   --ui-port 8080
 ```
 

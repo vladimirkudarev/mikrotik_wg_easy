@@ -20,7 +20,8 @@ def main():
     parser.add_argument("--lan-subnet", default="192.168.88.0/24", help="Subnet allowed to access Web UI.")
     parser.add_argument("--disk", default="disk1", help="RouterOS disk name for data/root dirs.")
     source = parser.add_mutually_exclusive_group()
-    source.add_argument("--image", default="disk1/mikrotik-wg-easy.tar", help="Container image tar path on RouterOS.")
+    source.add_argument("--image-file", default="mikrotik-wg-easy.tar", help="Container image filename on --disk.")
+    source.add_argument("--image", default="", help="Exact RouterOS /file name for the container image. Advanced override.")
     source.add_argument("--remote-image", default="", help="Registry image, for example registry.example.com/mikrotik-wg-easy:latest.")
     parser.add_argument("--ui-port", default="8080", help="LAN TCP port for Web UI dst-nat.")
     parser.add_argument("--password", default="", help="Initial Web UI password. Generated if omitted.")
@@ -32,11 +33,12 @@ def main():
         container_source = f'remote-image="{args.remote_image}"'
         image_preflight = "# remote-image mode: no local image file preflight"
     else:
-        container_source = f"file={args.image}"
+        image_name = args.image or f"{args.disk.rstrip('/')}/{args.image_file.lstrip('/')}"
+        container_source = f"file={image_name}"
         image_preflight = (
-            f':local image "{args.image}"\n'
+            f':local image "{image_name}"\n'
             ':if ([:len [/file/find where name=$image]] = 0) do={\n'
-            '  :error ("Container image file not found: " . $image . ". Check /file/print and regenerate installer with --image exact-path")\n'
+            '  :error ("Container image file not found: " . $image . ". Check /file/print and regenerate installer with --image-file filename or --image exact-name")\n'
             '}'
         )
     content = TEMPLATE.read_text()
