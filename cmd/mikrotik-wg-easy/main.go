@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
-	"io"
 	"log"
 	"net"
 	"net/http"
@@ -152,6 +151,9 @@ func loadState() (State, error) {
 	d := defaults()
 	if s.Settings.RouterHost == "" {
 		s.Settings = d
+	}
+	if s.Clients == nil {
+		s.Clients = []Client{}
 	}
 	return s, nil
 }
@@ -414,7 +416,108 @@ func requireAuth(w http.ResponseWriter, r *http.Request) (string, session, bool)
 	return id, s, true
 }
 
-var page = template.Must(template.New("page").Parse(`<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MikroTik WireGuard Easy</title><style>body{font-family:system-ui;margin:0;background:#f6f7f8;color:#1d252c}main{max-width:1120px;margin:0 auto;padding:28px}header{display:flex;justify-content:space-between;gap:16px;align-items:center;margin-bottom:20px}section{background:white;border:1px solid #dde2e7;border-radius:8px;padding:16px;margin-bottom:16px}input{box-sizing:border-box;width:100%;padding:9px;border:1px solid #c9d1d9;border-radius:6px}.grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}button{border:0;border-radius:6px;background:#135cc8;color:white;padding:9px 12px;cursor:pointer}.secondary{background:#eef2f7;color:#1d252c;border:1px solid #ccd4dd}table{width:100%;border-collapse:collapse}td,th{text-align:left;border-bottom:1px solid #e5e9ee;padding:9px}pre{white-space:pre-wrap;background:#111827;color:#fff;border-radius:8px;padding:12px;overflow:auto}.actions{display:flex;gap:8px;flex-wrap:wrap}</style></head><body><main><header><h1>MikroTik WireGuard Easy</h1><div class="actions"><button onclick="bootstrap()">Применить настройку</button><button class="secondary" onclick="logout()">Выйти</button></div></header><section><h2>Настройки</h2><div class="grid" id="settings"></div><p><button class="secondary" onclick="saveSettings()">Сохранить</button></p></section><section><h2>Клиенты</h2><p><input id="clientName" placeholder="Имя клиента"><button onclick="createClient()">Создать клиента</button></p><table><thead><tr><th>Имя</th><th>Адрес</th><th>Статус</th><th></th></tr></thead><tbody id="clients"></tbody></table></section><dialog id="dlg"><h2 id="title"></h2><img id="qr"><pre id="config"></pre><button onclick="dlg.close()">Закрыть</button></dialog></main><script>let csrf="";const fields=["router_host","router_user","router_port","ssh_key","wg_interface","listen_port","client_cidr","router_address","endpoint","dns","allowed_ips","keepalive","wan_interface_list"];function esc(v){return String(v||"").replaceAll("&","&amp;").replaceAll('"',"&quot;").replaceAll("<","&lt;")}async function api(p,o={}){let h={"content-type":"application/json",...(o.headers||{})};if(o.method&&o.method!="GET")h["x-csrf-token"]=csrf;let r=await fetch(p,{...o,headers:h});let t=await r.text();let d;try{d=t?JSON.parse(t):null}catch{d=t}if(!r.ok)throw new Error(d?.error||t);return d}async function load(){csrf=(await api("/api/session")).csrf;let s=await api("/api/settings");settings.innerHTML=fields.map(k=>'<div><label>'+k+'</label><input id="s_'+k+'" value="'+esc(s[k])+'"></div>').join("");let rows=await api("/api/clients");clients.innerHTML=rows.map(c=>'<tr><td>'+esc(c.name)+'</td><td>'+esc(c.address)+'</td><td>'+(c.disabled?"Отключен":"Активен")+'</td><td class="actions"><button class="secondary" onclick="showClient(\\''+c.id+'\\')">QR/Config</button><a href="/api/clients/'+c.id+'/download">.conf</a><button class="secondary" onclick="act(\\''+c.id+'\\',\\''+(c.disabled?"enable":"disable")+'\\')">'+(c.disabled?"Включить":"Отключить")+'</button><button class="secondary" onclick="act(\\''+c.id+'\\',\\'recreate-config\\')">Пересоздать</button><button class="secondary" onclick="del(\\''+c.id+'\\')">Удалить</button></td></tr>').join("")}async function saveSettings(){let p={};fields.forEach(k=>p[k]=document.getElementById("s_"+k).value);await api("/api/settings",{method:"POST",body:JSON.stringify(p)});await load()}async function bootstrap(){await saveSettings();alert(JSON.stringify(await api("/api/bootstrap",{method:"POST",body:"{}"})))}async function createClient(){let name=clientName.value.trim();if(!name)return;let c=await api("/api/clients",{method:"POST",body:JSON.stringify({name})});clientName.value="";await load();await showClient(c.id)}async function showClient(id){let c=await api("/api/clients/"+id+"/config");title.textContent=c.name;config.textContent=c.config;qr.src="/api/clients/"+id+"/qr";dlg.showModal()}async function act(id,a){let r=await api("/api/clients/"+id+"/"+a,{method:"POST",body:"{}"});await load();if(r.config){title.textContent=r.name;config.textContent=r.config;qr.src="/api/clients/"+id+"/qr";dlg.showModal()}}async function del(id){if(confirm("Удалить клиента?")){await api("/api/clients/"+id,{method:"DELETE",body:"{}"});await load()}}async function logout(){await api("/logout",{method:"POST",body:"{}"});location.href="/login"}load().catch(e=>alert(e.message));</script></body></html>`))
+var loginPage = `<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>MikroTik WireGuard Easy</title>
+  <style>
+    :root{color-scheme:light;--bg:#eef1f4;--panel:#fff;--text:#17202a;--muted:#5b6775;--line:#d8dee6;--primary:#1763c6;--primary-dark:#104f9f;--danger:#b42318;--shadow:0 18px 50px rgba(25,35,45,.14)}
+    *{box-sizing:border-box}body{margin:0;min-height:100vh;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:linear-gradient(145deg,#f7f9fb 0%,var(--bg) 100%);color:var(--text);letter-spacing:0}
+    main{min-height:100vh;display:grid;place-items:center;padding:24px}
+    .login{width:min(420px,100%);background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow);padding:28px}
+    .brand{display:flex;align-items:center;gap:12px;margin-bottom:24px}.mark{width:38px;height:38px;border-radius:8px;background:#1763c6;color:#fff;display:grid;place-items:center;font-weight:800}.brand h1{font-size:20px;line-height:1.2;margin:0}.brand p{margin:4px 0 0;color:var(--muted);font-size:13px}
+    label{display:block;font-size:13px;font-weight:650;margin-bottom:8px}input{width:100%;height:42px;border:1px solid #c8d0da;border-radius:6px;padding:0 12px;font:inherit;background:#fff;color:var(--text)}input:focus{outline:2px solid rgba(23,99,198,.22);border-color:var(--primary)}
+    button{width:100%;height:42px;margin-top:16px;border:0;border-radius:6px;background:var(--primary);color:#fff;font:inherit;font-weight:700;cursor:pointer}button:hover{background:var(--primary-dark)}
+    .error{margin:0 0 16px;padding:10px 12px;border:1px solid #f2b8b5;background:#fff4f2;color:var(--danger);border-radius:6px;font-size:13px}
+  </style>
+</head>
+<body>
+  <main>
+    <form class="login" method="post" action="/">
+      <div class="brand"><div class="mark">WG</div><div><h1>MikroTik WireGuard Easy</h1><p>Управление клиентами WireGuard</p></div></div>
+      {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
+      <label for="password">Пароль администратора</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" autofocus>
+      <button type="submit">Войти</button>
+    </form>
+  </main>
+</body>
+</html>`
+
+var loginTemplate = template.Must(template.New("login").Parse(loginPage))
+
+var page = template.Must(template.New("page").Parse(`<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>MikroTik WireGuard Easy</title>
+  <style>
+    :root{color-scheme:light;--bg:#f2f4f7;--surface:#fff;--surface-2:#f8fafc;--text:#17202a;--muted:#627183;--line:#d9e0e8;--primary:#1763c6;--primary-dark:#104f9f;--ok:#147a4b;--warn:#9a6700;--danger:#b42318;--danger-bg:#fff4f2;--radius:8px}
+    *{box-sizing:border-box}body{margin:0;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:var(--bg);color:var(--text);letter-spacing:0}
+    button,input{font:inherit}button{border:0;border-radius:6px;height:36px;padding:0 12px;background:var(--primary);color:#fff;font-weight:700;cursor:pointer;white-space:nowrap}button:hover{background:var(--primary-dark)}button.secondary{background:#fff;color:#253241;border:1px solid #c9d2dd}button.secondary:hover{background:#eef3f8}button.danger{background:var(--danger)}button:disabled{opacity:.55;cursor:not-allowed}
+    a{color:var(--primary);font-weight:650;text-decoration:none}a:hover{text-decoration:underline}
+    .shell{min-height:100vh}.topbar{background:#fff;border-bottom:1px solid var(--line)}.topbar-inner{max-width:1220px;margin:0 auto;padding:16px 24px;display:flex;align-items:center;justify-content:space-between;gap:16px}.brand{display:flex;align-items:center;gap:12px;min-width:0}.mark{width:36px;height:36px;border-radius:8px;background:var(--primary);color:#fff;display:grid;place-items:center;font-weight:800}.brand h1{font-size:18px;line-height:1.2;margin:0}.brand p{margin:3px 0 0;color:var(--muted);font-size:13px}.top-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+    main{max-width:1220px;margin:0 auto;padding:22px 24px 34px}.status{min-height:40px;margin-bottom:14px}.notice{display:none;border:1px solid var(--line);background:#fff;border-radius:8px;padding:10px 12px;font-size:14px}.notice.show{display:block}.notice.error{border-color:#f1aaa4;background:var(--danger-bg);color:var(--danger)}.notice.ok{border-color:#a7d8bf;background:#f1fbf5;color:var(--ok)}
+    .layout{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:18px;align-items:start}.panel{background:var(--surface);border:1px solid var(--line);border-radius:8px;margin-bottom:18px}.panel-head{padding:16px 18px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:12px}.panel-head h2{font-size:16px;margin:0}.panel-head p{margin:4px 0 0;color:var(--muted);font-size:13px}.panel-body{padding:18px}
+    .settings-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}.field label{display:block;margin-bottom:7px;font-size:12px;font-weight:750;color:#354254}.field input{width:100%;height:38px;border:1px solid #c8d0da;border-radius:6px;padding:0 10px;background:#fff;color:var(--text)}.field input:focus{outline:2px solid rgba(23,99,198,.2);border-color:var(--primary)}.hint{display:block;margin-top:2px;color:var(--muted);font-weight:600;line-height:1.25}
+    .client-create{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px}.client-create input{height:38px;border:1px solid #c8d0da;border-radius:6px;padding:0 10px}
+    table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:12px 10px;border-bottom:1px solid #e7ecf2;vertical-align:middle}th{font-size:12px;text-transform:uppercase;color:var(--muted);font-weight:800}td{font-size:14px}.actions{display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-end}.badge{display:inline-flex;align-items:center;height:24px;padding:0 8px;border-radius:999px;font-size:12px;font-weight:750}.badge.ok{background:#eaf7ef;color:var(--ok)}.badge.off{background:#fff7e6;color:var(--warn)}.empty{padding:28px;text-align:center;color:var(--muted);border:1px dashed #cbd4df;border-radius:8px;background:var(--surface-2)}
+    .summary{display:grid;gap:10px}.summary-row{display:flex;justify-content:space-between;gap:12px;border-bottom:1px solid #e7ecf2;padding-bottom:10px}.summary-row:last-child{border-bottom:0;padding-bottom:0}.summary-row span:first-child{color:var(--muted);font-size:13px}.summary-row span:last-child{font-weight:750;text-align:right;overflow-wrap:anywhere}
+    dialog{width:min(860px,calc(100vw - 28px));border:1px solid var(--line);border-radius:8px;padding:0;box-shadow:0 24px 70px rgba(20,28,38,.22)}dialog::backdrop{background:rgba(18,27,38,.45)}.modal-head{padding:16px 18px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:12px}.modal-head h2{margin:0;font-size:16px}.modal-body{padding:18px;display:grid;grid-template-columns:260px minmax(0,1fr);gap:18px}.qr-box{display:grid;place-items:center;border:1px solid var(--line);border-radius:8px;background:#fff;min-height:260px}.qr-box img{width:236px;height:236px}.config{margin:0;min-height:260px;max-height:420px;overflow:auto;white-space:pre-wrap;word-break:break-word;background:#101722;color:#f8fbff;border-radius:8px;padding:14px;font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+    @media (max-width:980px){.layout{grid-template-columns:1fr}.settings-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.modal-body{grid-template-columns:1fr}.qr-box{min-height:auto;padding:14px}}@media (max-width:640px){.topbar-inner,main{padding-left:14px;padding-right:14px}.topbar-inner{align-items:flex-start;flex-direction:column}.top-actions{width:100%}.top-actions button{flex:1}.settings-grid{grid-template-columns:1fr}.client-create{grid-template-columns:1fr}.actions{justify-content:flex-start}th:nth-child(2),td:nth-child(2){display:none}}
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar"><div class="topbar-inner"><div class="brand"><div class="mark">WG</div><div><h1>MikroTik WireGuard Easy</h1><p>WireGuard на RouterOS через контейнер</p></div></div><div class="top-actions"><button id="bootstrapBtn" type="button">Применить настройку</button><button id="logoutBtn" class="secondary" type="button">Выйти</button></div></div></header>
+    <main>
+      <div class="status"><div id="notice" class="notice"></div></div>
+      <div class="layout">
+        <section class="panel"><div class="panel-head"><div><h2>Настройки WireGuard</h2><p>Параметры сохраняются в контейнере и применяются к RouterOS по SSH</p></div><button id="saveBtn" class="secondary" type="button">Сохранить</button></div><div class="panel-body"><div id="settings" class="settings-grid"></div></div></section>
+        <aside class="panel"><div class="panel-head"><div><h2>Состояние</h2><p>Текущие ключевые параметры</p></div></div><div class="panel-body"><div id="summary" class="summary"></div></div></aside>
+        <section class="panel"><div class="panel-head"><div><h2>Клиенты</h2><p>Создание, QR-код, конфиг, отключение и удаление peer</p></div></div><div class="panel-body"><div class="client-create"><input id="clientName" placeholder="Например: iphone-vladimir" autocomplete="off"><button id="createBtn" type="button">Создать клиента</button></div><div id="clientTable"></div></div></section>
+      </div>
+    </main>
+  </div>
+  <dialog id="dlg"><div class="modal-head"><h2 id="title"></h2><button id="closeDlg" class="secondary" type="button">Закрыть</button></div><div class="modal-body"><div class="qr-box"><img id="qr" alt="QR-код WireGuard"></div><pre id="config" class="config"></pre></div></dialog>
+  <script>
+    let csrf="";
+    const fieldMeta=[
+      ["router_host","RouterOS host","SSH адрес RouterOS из контейнера"],
+      ["router_user","RouterOS user","Пользователь для SSH"],
+      ["router_port","SSH port","Обычно 22"],
+      ["ssh_key","SSH key","Путь внутри контейнера"],
+      ["wg_interface","Interface","Имя WireGuard interface"],
+      ["listen_port","Listen port","UDP порт WireGuard"],
+      ["client_cidr","Client CIDR","Пул адресов клиентов"],
+      ["router_address","Router address","Адрес роутера в WG-сети"],
+      ["endpoint","Endpoint","Публичный адрес, если отличается"],
+      ["dns","DNS","DNS для клиентов"],
+      ["allowed_ips","Allowed IPs","Full-tunnel: 0.0.0.0/0"],
+      ["keepalive","Keepalive","Persistent keepalive"],
+      ["wan_interface_list","WAN list","Interface list для NAT"]
+    ];
+    function esc(v){return String(v??"").replaceAll("&","&amp;").replaceAll('"',"&quot;").replaceAll("<","&lt;").replaceAll(">","&gt;")}
+    function show(msg,type="ok"){notice.textContent=msg;notice.className="notice show "+type;clearTimeout(show.t);show.t=setTimeout(()=>notice.className="notice",4200)}
+    async function api(p,o={}){const h={"content-type":"application/json",...(o.headers||{})};if(o.method&&o.method!="GET")h["x-csrf-token"]=csrf;const r=await fetch(p,{...o,headers:h});const t=await r.text();let d;try{d=t?JSON.parse(t):null}catch{d=t}if(!r.ok)throw new Error(d?.error||t||r.statusText);return d}
+    function currentSettings(){const p={};fieldMeta.forEach(([k])=>p[k]=document.getElementById("s_"+k).value.trim());return p}
+	    async function load(){csrf=(await api("/api/session")).csrf;const s=await api("/api/settings");settings.innerHTML=fieldMeta.map(([k,label,hint])=>'<div class="field"><label for="s_'+k+'"><span>'+esc(label)+'</span><span class="hint">'+esc(hint)+'</span></label><input id="s_'+k+'" value="'+esc(s[k])+'"></div>').join("");summary.innerHTML=[["Interface",s.wg_interface],["Client CIDR",s.client_cidr],["Endpoint",s.endpoint||s.router_host],["Allowed IPs",s.allowed_ips]].map(([k,v])=>'<div class="summary-row"><span>'+esc(k)+'</span><span>'+esc(v)+'</span></div>').join("");renderClients(await api("/api/clients"))}
+	    function renderClients(rows){rows=rows||[];if(!rows.length){clientTable.innerHTML='<div class="empty">Клиентов пока нет. Создайте первого клиента и откройте QR-код для подключения.</div>';return}clientTable.innerHTML='<table><thead><tr><th>Имя</th><th>Адрес</th><th>Статус</th><th></th></tr></thead><tbody>'+rows.map(c=>'<tr><td><strong>'+esc(c.name)+'</strong></td><td>'+esc(c.address)+'</td><td><span class="badge '+(c.disabled?"off":"ok")+'">'+(c.disabled?"Отключен":"Активен")+'</span></td><td><div class="actions"><button class="secondary" type="button" data-action="show" data-id="'+esc(c.id)+'">QR / Config</button><a href="/api/clients/'+encodeURIComponent(c.id)+'/download">.conf</a><button class="secondary" type="button" data-action="'+(c.disabled?"enable":"disable")+'" data-id="'+esc(c.id)+'">'+(c.disabled?"Включить":"Отключить")+'</button><button class="secondary" type="button" data-action="recreate-config" data-id="'+esc(c.id)+'">Пересоздать</button><button class="danger" type="button" data-action="delete" data-id="'+esc(c.id)+'">Удалить</button></div></td></tr>').join("")+'</tbody></table>'}
+    async function saveSettings(){await api("/api/settings",{method:"POST",body:JSON.stringify(currentSettings())});await load();show("Настройки сохранены")}
+    async function bootstrap(){await saveSettings();await api("/api/bootstrap",{method:"POST",body:"{}"});show("Настройка RouterOS применена")}
+    async function createClient(){const name=clientName.value.trim();if(!name){show("Введите имя клиента","error");return}const c=await api("/api/clients",{method:"POST",body:JSON.stringify({name})});clientName.value="";await load();await showClient(c.id)}
+    async function showClient(id){const c=await api("/api/clients/"+id+"/config");title.textContent=c.name;config.textContent=c.config;qr.src="/api/clients/"+id+"/qr?ts="+Date.now();dlg.showModal()}
+    async function act(id,a){const r=await api("/api/clients/"+id+"/"+a,{method:"POST",body:"{}"});await load();show("Клиент обновлен");if(r.config){title.textContent=r.name;config.textContent=r.config;qr.src="/api/clients/"+id+"/qr?ts="+Date.now();dlg.showModal()}}
+    async function delClient(id){if(!confirm("Удалить клиента и peer на MikroTik?"))return;await api("/api/clients/"+id,{method:"DELETE",body:"{}"});await load();show("Клиент удален")}
+    async function logout(){await api("/logout",{method:"POST",body:"{}"});location.href="/"}
+    clientTable.addEventListener("click",e=>{const b=e.target.closest("button[data-action]");if(!b)return;const id=b.dataset.id;const a=b.dataset.action;if(a==="show")showClient(id).catch(err=>show(err.message,"error"));else if(a==="delete")delClient(id).catch(err=>show(err.message,"error"));else act(id,a).catch(err=>show(err.message,"error"))});
+    saveBtn.onclick=()=>saveSettings().catch(e=>show(e.message,"error"));bootstrapBtn.onclick=()=>bootstrap().catch(e=>show(e.message,"error"));createBtn.onclick=()=>createClient().catch(e=>show(e.message,"error"));logoutBtn.onclick=()=>logout().catch(e=>show(e.message,"error"));closeDlg.onclick=()=>dlg.close();clientName.addEventListener("keydown",e=>{if(e.key==="Enter")createBtn.click()});load().catch(e=>show(e.message,"error"));
+  </script>
+</body>
+</html>`))
 
 func main() {
 	if err := os.MkdirAll(appData, 0700); err != nil {
@@ -422,8 +525,9 @@ func main() {
 	}
 	loginHandler := func(w http.ResponseWriter, r *http.Request) {
 		withHeaders(w)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if r.Method == http.MethodGet {
-			io.WriteString(w, `<form method="post" action="/"><input name="password" type="password" autofocus><button>Login</button></form>`)
+			_ = loginTemplate.Execute(w, nil)
 			return
 		}
 		if r.Method != http.MethodPost {
@@ -433,6 +537,7 @@ func main() {
 		_ = r.ParseForm()
 		if !verifyPassword(r.Form.Get("password"), passwordHash) {
 			w.WriteHeader(403)
+			_ = loginTemplate.Execute(w, map[string]string{"Error": "Неверный пароль"})
 			return
 		}
 		id, csrf := randToken(32), randToken(32)
@@ -453,6 +558,7 @@ func main() {
 			return
 		}
 		withHeaders(w)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_ = page.Execute(w, nil)
 	})
 	http.HandleFunc("/logout", func(w http.ResponseWriter, r *http.Request) {
