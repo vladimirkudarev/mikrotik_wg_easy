@@ -120,13 +120,33 @@ disk1/wg-easy-data/id_ed25519
 То есть локальный файл `wg-easy-id_ed25519` нужно загрузить на MikroTik и
 переименовать в `id_ed25519` внутри папки `disk1/wg-easy-data`.
 
-Если папки `disk1/wg-easy-data` еще нет, создайте ее в WinBox/WebFig через
-`Files`, либо через CLI, если ваша версия RouterOS поддерживает создание
-директорий:
+Если папки `disk1/wg-easy-data` еще нет, проще всего создать ее в WinBox:
+
+1. Открыть `Files`.
+2. Зайти на диск `disk1`.
+3. Нажать `New Folder`.
+4. Назвать папку `wg-easy-data`.
+5. Загрузить private key внутрь этой папки.
+6. Переименовать файл в `id_ed25519`, если он загружен как
+   `wg-easy-id_ed25519`.
+
+В WebFig логика такая же: `Files` -> `disk1` -> создать папку/загрузить файл.
+
+Через CLI это может выглядеть так, если ваша версия RouterOS поддерживает
+создание directory через `/file`:
 
 ```routeros
 /file/add name=disk1/wg-easy-data type=directory
 ```
+
+После этого private key нужно загрузить именно как:
+
+```text
+disk1/wg-easy-data/id_ed25519
+```
+
+Если CLI-команда создания папки не поддерживается или ведет себя иначе на вашей
+версии RouterOS, используйте WinBox/WebFig. Это самый предсказуемый способ.
 
 Проверка private key на MikroTik:
 
