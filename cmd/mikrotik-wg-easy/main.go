@@ -420,10 +420,14 @@ func main() {
 	if err := os.MkdirAll(appData, 0700); err != nil {
 		log.Fatal(err)
 	}
-	http.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
+	loginHandler := func(w http.ResponseWriter, r *http.Request) {
 		withHeaders(w)
 		if r.Method == http.MethodGet {
-			io.WriteString(w, `<form method="post"><input name="password" type="password" autofocus><button>Login</button></form>`)
+			io.WriteString(w, `<form method="post" action="/"><input name="password" type="password" autofocus><button>Login</button></form>`)
+			return
+		}
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
 		_ = r.ParseForm()
@@ -437,9 +441,15 @@ func main() {
 		sessionsMu.Unlock()
 		http.SetCookie(w, &http.Cookie{Name: "mwg_session", Value: id, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: sessionTTL})
 		http.Redirect(w, r, "/", http.StatusFound)
-	})
+	}
+	http.HandleFunc("/login", loginHandler)
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if _, _, ok := requireAuth(w, r); !ok {
+		if passwordHash == "" {
+			errResp(w, 503, fmt.Errorf("APP_PASSWORD_HASH or APP_PASSWORD is required"))
+			return
+		}
+		if _, _, ok := currentSession(r); !ok {
+			loginHandler(w, r)
 			return
 		}
 		withHeaders(w)
