@@ -12,18 +12,26 @@ build_one() {
   local suffix="$2"
   local tag="${IMAGE_NAME}:${suffix}"
   local tar_path="${DIST_DIR}/${IMAGE_NAME}-${suffix}.tar"
+  local raw_path="${DIST_DIR}/${IMAGE_NAME}-${suffix}.raw.tar"
 
   docker buildx build \
     --platform "${platform}" \
     --tag "${tag}" \
-    --load \
+    --provenance=false \
+    --output "type=docker,dest=${raw_path}" \
     "${ROOT_DIR}"
 
-  docker save "${tag}" --output "${tar_path}"
+  python3 "${ROOT_DIR}/scripts/routeros_archive.py" \
+    "${raw_path}" \
+    "${tar_path}" \
+    --repo-tag "${tag}"
+
+  rm -f "${raw_path}"
   gzip -f "${tar_path}"
+  gunzip -k "${tar_path}.gz"
+  echo "Wrote ${tar_path}"
   echo "Wrote ${tar_path}.gz"
 }
 
 build_one "linux/arm64" "arm64"
 build_one "linux/arm/v7" "armv7"
-

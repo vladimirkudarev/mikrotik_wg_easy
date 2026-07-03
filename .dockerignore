@@ -1,0 +1,12 @@
+.git
+.idea
+.agents
+.codex
+data
+dist
+deploy/routeros-install.rsc
+__pycache__
+*.pyc
+.env
+.venv
+

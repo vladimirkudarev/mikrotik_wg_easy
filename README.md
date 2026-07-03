@@ -55,10 +55,10 @@ APP_INSECURE_DEV=1 python3 src/mikrotik_wg_easy/app.py
 
 ## Быстрое развертывание
 
-Готовые tar.gz после сборки лежат в `dist/`:
+Готовые RouterOS-compatible tar после сборки лежат в `dist/`:
 
-- `dist/mikrotik-wg-easy-arm64.tar.gz` - для `architecture-name=arm64`;
-- `dist/mikrotik-wg-easy-armv7.tar.gz` - для `architecture-name=arm`/`armv7`.
+- `dist/mikrotik-wg-easy-arm64.tar` - для `architecture-name=arm64`;
+- `dist/mikrotik-wg-easy-armv7.tar` - для `architecture-name=arm`/`armv7`.
 
 Архив выбирается по архитектуре CPU, а не генерируется под каждый MikroTik
 отдельно.

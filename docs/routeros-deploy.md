@@ -50,13 +50,14 @@ install script проверяет существующие объекты и п�
 
 Используйте:
 
-- `dist/mikrotik-wg-easy-arm64.tar.gz` для `architecture-name=arm64`;
-- `dist/mikrotik-wg-easy-armv7.tar.gz` для `architecture-name=arm`.
+- `dist/mikrotik-wg-easy-arm64.tar` для `architecture-name=arm64`;
+- `dist/mikrotik-wg-easy-armv7.tar` для `architecture-name=arm`.
 
 Это не индивидуальный образ под каждый роутер. Один архив подходит всем
 устройствам той же архитектуры.
 
-Распаковать локально:
+Файл `.tar` загружается на MikroTik напрямую. Если у вас есть только `.tar.gz`,
+сначала распакуйте его локально:
 
 ```bash
 gunzip -c dist/mikrotik-wg-easy-arm64.tar.gz > mikrotik-wg-easy.tar
@@ -113,6 +114,26 @@ python3 scripts/generate_install.py \
 Ошибка вида `input does not match any value of file (/container/add (file))`
 означает, что RouterOS не нашел файл, указанный в параметре `/container/add
 file=...`.
+
+Для устройств с `total-hdd-space=128MiB` важно удалить старые тяжелые tar-файлы
+и failed container root-dir перед повторной установкой:
+
+```routeros
+/container/remove [find]
+/file/remove [find where name="disk1/mikrotik-wg-easy.tar"]
+```
+
+Новый Alpine/RouterOS archive должен быть около `20MiB`. Старый Debian/OCI
+archive около `45MiB` слишком тяжелый и несовместим с RouterOS parser:
+
+```text
+download/extract error: no config found in manifest
+download/extract error: unexpected layer: blobs/sha256/...
+```
+
+Если после загрузки `.tar` свободного места меньше примерно `50MiB`, установка
+может сорваться на распаковке. Для production надежнее использовать внешний
+storage, если модель MikroTik его поддерживает.
 
 3. Подготовить SSH key для доступа приложения к MikroTik.
 
