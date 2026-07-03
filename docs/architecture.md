@@ -51,9 +51,10 @@ LAN/admin VPN. Backend подключается к RouterOS по SSH на gatewa
 - `client-keepalive`;
 - `client-allowed-address`.
 
-После этого используем RouterOS 7.21+ `show-client-config`, сохраняем
-полученный client config в SQLite и строим QR через `qrencode`. Плюс: меньше
-своего криптокода и опора на штатную модель RouterOS.
+После этого используем RouterOS 7.21+ `show-client-config` и строим QR на лету.
+Клиентские записи и конфиги не хранятся в базе приложения: source of truth для
+клиентов - `/interface/wireguard/peers` на MikroTik. Плюс: меньше своего
+криптокода, видны peer, созданные вручную, и нет риска рассинхронизации с БД.
 
 ### App-generated mode
 
@@ -70,16 +71,16 @@ Backend сам генерирует keypair клиента, в RouterOS запи
 
 Текущий стек:
 
-- backend: Python 3.12 standard library;
+- backend: Go, single static binary;
 - frontend: встроенный HTML/JS без сборки;
-- хранение: SQLite на mounted volume;
-- RouterOS transport: системный `ssh`;
-- QR: `qrencode`;
+- хранение: `state.json` на mounted volume только для настроек сервиса;
+- RouterOS transport: SSH через Go `x/crypto/ssh`;
+- QR: Go-библиотека `go-qrcode`;
 - контейнер: `linux/arm64` и `linux/arm/v7`;
 - обязательная Web UI авторизация: PBKDF2 password hash, session cookie, CSRF.
 
-Такой стек выбран без Python-зависимостей из `pip`: в образе нужны только
-`openssh-client` и `qrencode`.
+Такой стек выбран ради малого RouterOS container image: в runtime-слое нет
+shell, Python, OpenSSH client и пакетного менеджера.
 
 ## Безопасность
 
@@ -90,7 +91,8 @@ Backend сам генерирует keypair клиента, в RouterOS запи
 - CSRF token для всех mutating requests.
 - Rate limit на HTTP requests.
 - Security headers: CSP, X-Frame-Options, X-Content-Type-Options.
-- Client config хранить в SQLite, так как повторная выдача QR разрешена.
+- Client config не хранить в приложении. Повторная выдача QR идет через
+  `show-client-config` для текущего RouterOS peer.
 - Не публиковать Web UI в WAN.
 
 ## RouterOS команды, которыми будет управлять backend
@@ -114,22 +116,23 @@ Backend сам генерирует keypair клиента, в RouterOS запи
 Peer создается через RouterOS-native режим:
 
 ```routeros
-/interface/wireguard/peers/add interface=wg0 name=phone private-key=auto allowed-address=10.8.0.2/32 client-address=10.8.0.2/32 client-dns=10.8.0.1 client-endpoint=vpn.example.com:13231 client-keepalive=25 client-allowed-address=0.0.0.0/0
-/interface/wireguard/peers/show-client-config [find where comment="mikrotik-wg-easy:<id>"]
+/interface/wireguard/peers/add interface=wg0 name=phone private-key=auto allowed-address=10.8.0.2/32 client-address=10.8.0.2/32 client-dns=10.8.0.1 client-endpoint=vpn.example.com client-keepalive=25 client-allowed-address=0.0.0.0/0
+/interface/wireguard/peers/show-client-config *1
 ```
 
 ## Lifecycle клиентов
 
-Каждый peer получает уникальный comment `mikrotik-wg-easy:<uuid>`. По нему
-приложение выполняет операции:
+Новые peer получают уникальный comment `mikrotik-wg-easy:<uuid>`, но список и
+операции строятся по RouterOS internal id (`*1`, `*A` и т.п.). Поэтому в UI
+появляются и peer, созданные вручную без comment. Приложение выполняет операции:
 
 - disable/enable peer через `/interface/wireguard/peers/set`;
 - delete peer через `/interface/wireguard/peers/remove`;
-- recreate config через `show-client-config`;
-- синхронизация флага `disabled` и сохраненного config в SQLite.
+- verify/config/QR через `show-client-config`;
+- edit peer через `/interface/wireguard/peers/set`.
 
-При выдаче нового IP приложение учитывает и SQLite, и текущие RouterOS peers:
-`/interface/wireguard/peers/print as-value`.
+При выдаче нового IP приложение учитывает текущие RouterOS peers:
+`/interface/wireguard/peers/print terse`.
 
 ## Bootstrap/Reconcile
 

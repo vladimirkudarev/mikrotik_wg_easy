@@ -11,8 +11,10 @@ MikroTik часто сканируют, поэтому Web UI не должен 
 - Использовать SSH key auth, не password SSH.
 - Создать отдельного RouterOS пользователя `wg-easy`.
 - Ограничить `/ip/service ssh address=` контейнерной сетью и admin LAN/VPN.
-- Хранить `/data` на внешнем диске, потому что там SQLite и SSH private key.
-- Делать backup `/data`, так как там хранятся клиентские конфиги.
+- Хранить `/data` на внешнем диске, потому что там SSH private key и настройки
+  сервиса.
+- Делать backup `/data`, чтобы не потерять настройки сервиса. Клиентские peer и
+  их параметры остаются на MikroTik в `/interface/wireguard/peers`.
 - Встроенный Web UI слушает HTTP. Для HTTPS нужен reverse proxy с TLS:
   Caddy, Nginx, Traefik или другой gateway в доверенной admin-сети.
 
